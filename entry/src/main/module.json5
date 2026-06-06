@@ -7,9 +7,10 @@
     "deviceTypes": [
       "phone",
       "tablet",
+      "2in1",
+      "car",
       "wearable",
-      "tv",
-      "car"
+      "tv"
     ],
     "deliveryWithInstall": true,
     "installationFree": false,

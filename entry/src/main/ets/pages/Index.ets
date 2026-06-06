@@ -16,6 +16,8 @@ import {
 import { Hero3D } from '../components/Hero3D';
 import { SseClient, SseCallbacks, SseState } from '../services/SseClient';
 import { Config } from '../common/Config';
+import { speechRecognizer } from '@kit.CoreSpeechKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import {
   isBluetoothAdapterOn,
   requestBleScanPermissions,
@@ -53,6 +55,14 @@ enum AiStatus {
   CONNECTING = 'connecting',
   STREAMING = 'streaming',
   ERROR = 'error'
+}
+
+enum VoiceStatus {
+  IDLE = 'idle',             // 等待用户说话
+  REQUESTING_MIC = 'mic',    // 正在请求麦克风权限
+  LISTENING = 'listening',   // 正在聆听
+  TRANSCRIBING = 'transcribing', // 识别中
+  ERROR = 'error'            // 识别失败
 }
 
 const DEFAULT_DEVICE_LIST: DeviceItem[] = [
@@ -101,9 +111,14 @@ struct Index {
 
   // ── AI 助手状态 ──
   @State chatMessages: ChatMessage[] = [];
-  @State chatInput: string = '';
   @State isAiStreaming: boolean = false;
   @State aiStatus: AiStatus = AiStatus.IDLE;
+
+  // ── 语音输入状态 ──
+  @State voiceStatus: VoiceStatus = VoiceStatus.IDLE;
+  @State isVoiceListening: boolean = false;
+  private asrEngine: speechRecognizer.SpeechRecognitionEngine | undefined = undefined;
+  private voiceSessionId: string = '';
 
   private appendLog(level: 'INFO' | 'DEBUG' | 'WARN' | 'ERROR', message: string): void {
     const now = new Date();
@@ -142,46 +157,54 @@ struct Index {
     }];
   }
 
-  private sendChatMessage(): void {
+  // 纯语音发送 — 戒指设备无键盘，语音识别后直接调用
+  private sendVoiceMessage(msg: string): void {
     if (!Config.hasApiKey) {
       promptAction.showToast({ message: '请先在 entry/src/main/ets/common/Config.ets 填入 DEEPSEEK_API_KEY' });
       return;
     }
-    const msg = this.chatInput.trim();
     if (!msg || this.isAiStreaming) return;
 
     this.addChatMessage('user', msg);
-    this.chatInput = '';
     this.isAiStreaming = true;
     this.aiStatus = AiStatus.CONNECTING;
-    this.appendLog('INFO', `AI 请求发送: "${msg.substring(0, 20)}..."`);
+    this.voiceStatus = VoiceStatus.IDLE;
+    this.appendLog('INFO', `🎤 语音 → DeepSeek: "${msg.substring(0, 20)}..."`);
 
     const callbacks: SseCallbacks = {
       onToken: (token: string) => {
-        // 最后一个 assistant 消息追加 token
         const msgs = [...this.chatMessages];
         const lastIdx = msgs.length - 1;
         if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
-          msgs[lastIdx].content = msgs[lastIdx].content + token;
+          msgs[lastIdx] = { role: 'assistant', content: msgs[lastIdx].content + token, time: msgs[lastIdx].time };
           this.chatMessages = msgs;
         }
       },
-      onDone: (_fullText: string, _conversationId: string) => {
+      onDone: (fullText: string, _conversationId: string) => {
         this.isAiStreaming = false;
         this.aiStatus = AiStatus.IDLE;
-        this.appendLog('INFO', 'AI 对话完成');
+        const msgs = [...this.chatMessages];
+        const lastIdx = msgs.length - 1;
+        if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
+          msgs[lastIdx] = { role: 'assistant', content: fullText || msgs[lastIdx].content, time: msgs[lastIdx].time };
+          this.chatMessages = msgs;
+        }
+        this.appendLog('INFO', `← DeepSeek 完成 (${fullText.length} 字)`);
+        if (!fullText) {
+          promptAction.showToast({ message: 'DeepSeek 返回空响应，请检查 API Key 或网络', duration: 3000 });
+        }
       },
       onError: (err: Error) => {
         this.isAiStreaming = false;
         this.aiStatus = AiStatus.ERROR;
-        // 追加错误消息
         const msgs = [...this.chatMessages];
         const lastIdx = msgs.length - 1;
         if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
-          msgs[lastIdx].content = `⚠️ ${err.message}`;
+          msgs[lastIdx] = { role: 'assistant', content: `⚠️ ${err.message}`, time: msgs[lastIdx].time };
           this.chatMessages = msgs;
         }
-        this.appendLog('ERROR', `AI 错误: ${err.message}`);
+        this.appendLog('ERROR', `× DeepSeek: ${err.message}`);
+        promptAction.showToast({ message: err.message, duration: 4000 });
       },
       onStateChange: (state: SseState) => {
         this.aiStatus = state === SseState.STREAMING ? AiStatus.STREAMING :
@@ -194,6 +217,123 @@ struct Index {
     this.addChatMessage('assistant', '思考中...');
 
     SseClient.streamChat(msg, null, callbacks);
+  }
+
+  // ── 语音输入方法 ──
+  private async requestMicrophonePermission(): Promise<boolean> {
+    try {
+      const atManager = abilityAccessCtrl.createAtManager();
+      const context = getContext(this) as common.UIAbilityContext;
+      const result = await atManager.requestPermissionsFromUser(context, ['ohos.permission.MICROPHONE']);
+      return result.authResults[0] === 0;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  private async startVoiceInput(): Promise<void> {
+    if (this.isVoiceListening || this.isAiStreaming) return;
+    if (!Config.hasApiKey) {
+      promptAction.showToast({ message: '请先配置 DeepSeek API Key' });
+      return;
+    }
+
+    this.voiceStatus = VoiceStatus.REQUESTING_MIC;
+    const hasMic = await this.requestMicrophonePermission();
+    if (!hasMic) {
+      this.voiceStatus = VoiceStatus.ERROR;
+      promptAction.showToast({ message: '需要麦克风权限才能使用语音输入' });
+      return;
+    }
+
+    try {
+      this.asrEngine = await speechRecognizer.createEngine({
+        language: 'zh-CN',
+        online: 1,
+        extraParams: { 'locate': 'CN', 'recognizerMode': 'short' }
+      });
+
+      this.voiceSessionId = 'ctrl4u_voice_' + Date.now();
+      let resultText = '';
+
+      this.asrEngine.setListener({
+        onStart: (_sessionId: string, _eventMessage: string) => {
+          this.isVoiceListening = true;
+          this.voiceStatus = VoiceStatus.LISTENING;
+          this.appendLog('INFO', '语音识别已启动');
+        },
+        onEvent: (_sessionId: string, _eventCode: number, _eventMessage: string) => {
+          // 中间事件，无需处理
+        },
+        onResult: (_sessionId: string, result: speechRecognizer.SpeechRecognitionResult) => {
+          resultText = result.result;
+        },
+        onComplete: (_sessionId: string, _eventMessage: string) => {
+          this.isVoiceListening = false;
+          this.voiceStatus = VoiceStatus.TRANSCRIBING;
+          this.appendLog('INFO', `语音识别完成: "${resultText}"`);
+          if (resultText.trim()) {
+            this.sendVoiceMessage(resultText.trim());
+          } else {
+            this.voiceStatus = VoiceStatus.IDLE;
+            promptAction.showToast({ message: '未识别到语音内容，请重试' });
+          }
+        },
+        onError: (_sessionId: string, errorCode: number, errorMessage: string) => {
+          this.isVoiceListening = false;
+          this.voiceStatus = VoiceStatus.ERROR;
+          this.appendLog('ERROR', `语音识别错误 [${errorCode}]: ${errorMessage}`);
+          promptAction.showToast({ message: '语音识别失败，请重试' });
+        }
+      });
+
+      this.asrEngine.startListening({
+        sessionId: this.voiceSessionId,
+        audioInfo: { audioType: 'pcm', sampleRate: 16000, soundChannel: 1, sampleBit: 16 },
+        extraParams: {
+          'recognitionMode': 0,
+          'vadBegin': 2000,
+          'vadEnd': 1000,
+          'maxAudioDuration': 30000
+        }
+      });
+    } catch (err) {
+      this.isVoiceListening = false;
+      this.voiceStatus = VoiceStatus.ERROR;
+      const msg = (err as BusinessError).message || JSON.stringify(err);
+      this.appendLog('ERROR', `语音引擎启动失败: ${msg}`);
+      promptAction.showToast({ message: '语音识别不可用（可能需要真机）' });
+    }
+  }
+
+  private stopVoiceInput(): void {
+    try {
+      this.asrEngine?.finish(this.voiceSessionId);
+    } catch (_e) { /* 忽略 */ }
+    this.isVoiceListening = false;
+    this.voiceStatus = VoiceStatus.IDLE;
+  }
+
+  // 语音按钮图标
+  private getMicIcon(): string {
+    switch (this.voiceStatus) {
+      case VoiceStatus.REQUESTING_MIC: return '🔐';
+      case VoiceStatus.LISTENING: return '⏺';
+      case VoiceStatus.TRANSCRIBING: return '📝';
+      case VoiceStatus.ERROR: return '⚠️';
+      default: return '🎤';
+    }
+  }
+
+  // 语音按钮提示文字
+  private getVoiceHint(): string {
+    switch (this.voiceStatus) {
+      case VoiceStatus.REQUESTING_MIC: return '请求权限...';
+      case VoiceStatus.LISTENING: return '正在聆听...';
+      case VoiceStatus.TRANSCRIBING: return '识别中...';
+      case VoiceStatus.ERROR: return '点击重试';
+      default: return '轻触说话';
+    }
   }
 
   private async requestLocationPermissions(): Promise<boolean> {
@@ -1146,9 +1286,13 @@ struct Index {
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor('#333333')
-              Text('可以问我关于骑行安全、指环使用、跟拍技巧等问题')
+              Text('轻触下方 🎤 按钮开始语音对话')
                 .fontSize(13)
                 .fontColor('#888888')
+                .textAlign(TextAlign.Center)
+              Text('骑行安全、指环使用、跟拍技巧...随时问我')
+                .fontSize(12)
+                .fontColor('#AAAAAA')
                 .textAlign(TextAlign.Center)
               if (!Config.hasApiKey) {
                 Text('提示：流式对话需配置 DeepSeek API Key')
@@ -1202,57 +1346,66 @@ struct Index {
       .width('100%')
       .scrollBar(BarState.Auto)
 
-      // 输入区
+      // 语音输入区 — 戒指设备纯语音交互
       Column() {
-        if (!Config.hasApiKey) {
-          Text('未配置 API Key 时无法发起对话')
-            .fontSize(11)
-            .fontColor('#C2410C')
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 6, bottom: 2 })
-        }
         Divider().color('#F0F0F0')
-        Row({ space: 8 }) {
-          TextInput({
-            placeholder: Config.hasApiKey ? '输入骑行问题...' : '请先在 Config.ets 配置 DEEPSEEK_API_KEY',
-            text: this.chatInput
-          })
-            .fontSize(15)
-            .placeholderColor('#BBBBBB')
-            .backgroundColor('#F5F5F5')
-            .borderRadius(20)
-            .height(40)
-            .layoutWeight(1)
-            .enabled(Config.hasApiKey && !this.isAiStreaming)
-            .onChange((val: string) => {
-              this.chatInput = val;
-            })
-            .onSubmit(() => {
-              this.sendChatMessage();
-            })
-
+        Column({ space: 8 }) {
           if (this.isAiStreaming) {
+            // AI 回复中 — 显示脉冲动画
             LoadingProgress()
-              .width(32)
-              .height(32)
+              .width(36)
+              .height(36)
               .color('#007DFF')
+            Text(this.aiStatus === AiStatus.CONNECTING ? '连接 DeepSeek...' : 'AI 回复中...')
+              .fontSize(13)
+              .fontColor('#888888')
           } else {
-            Text('➤')
-              .fontSize(22)
-              .fontColor(this.chatInput.trim() ? '#007DFF' : '#BBBBBB')
-              .fontWeight(FontWeight.Bold)
-              .width(32)
-              .height(32)
-              .textAlign(TextAlign.Center)
-              .borderRadius(16)
-              .backgroundColor(this.chatInput.trim() ? '#E8F0FF' : '#F0F0F0')
-              .onClick(() => {
-                this.sendChatMessage();
-              })
+            // 大麦克风按钮
+            Column() {
+              Stack({ alignContent: Alignment.Center }) {
+                // 脉冲波纹（录音时）
+                if (this.voiceStatus === VoiceStatus.LISTENING) {
+                  ForEach([1, 2, 3], (_v: number, index: number) => {
+                    Circle()
+                      .width(48 + index * 18)
+                      .height(48 + index * 18)
+                      .fillOpacity(0.08)
+                      .fill('#007DFF')
+                  })
+                }
+
+                // 主按钮
+                Column() {
+                  Text(this.getMicIcon())
+                    .fontSize(28)
+                    .fontColor(this.voiceStatus === VoiceStatus.LISTENING ? '#FFFFFF' : '#007DFF')
+                }
+                .width(this.voiceStatus === VoiceStatus.LISTENING ? 56 : 64)
+                .height(this.voiceStatus === VoiceStatus.LISTENING ? 56 : 64)
+                .borderRadius(this.voiceStatus === VoiceStatus.LISTENING ? 28 : 32)
+                .backgroundColor(this.voiceStatus === VoiceStatus.LISTENING ? '#FF4444' : '#E8F0FF')
+                .justifyContent(FlexAlign.Center)
+              }
+              .width(100)
+              .height(100)
+
+              Text(this.getVoiceHint())
+                .fontSize(13)
+                .fontColor(this.voiceStatus === VoiceStatus.LISTENING ? '#FF4444' : '#888888')
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Center)
+            .onClick(() => {
+              if (this.voiceStatus === VoiceStatus.IDLE || this.voiceStatus === VoiceStatus.ERROR) {
+                this.startVoiceInput();
+              }
+            })
           }
         }
         .width('100%')
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .padding({ top: 14, bottom: 16 })
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
       }
       .width('100%')
       .backgroundColor('#FFFFFF')
@@ -1440,5 +1593,10 @@ struct Index {
       clearTimeout(this.bleAutoStopTimerId);
       this.bleAutoStopTimerId = -1;
     }
+    // 释放语音引擎
+    try {
+      this.asrEngine?.shutdown();
+      this.asrEngine = undefined;
+    } catch (_e) { /* 忽略 */ }
   }
 }

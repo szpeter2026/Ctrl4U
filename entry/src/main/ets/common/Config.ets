@@ -25,16 +25,17 @@ export class Config {
 
   // DeepSeek 直连配置
   // ⚠️ 竞赛演示：填入有效 API 密钥后即可启用 AI 对话功能
+  // ⚠️ 提交时已清空密钥，请在此填入你自己的 DeepSeek API Key
   static readonly DEEPSEEK_API_KEY: string = '' // ← 在此填入 DeepSeek API Key
   static readonly DEEPSEEK_BASE_URL: string = 'https://api.deepseek.com'
-  static readonly DEEPSEEK_MODEL: string = 'deepseek-chat' // deepseek-chat / deepseek-reasoner
+  static readonly DEEPSEEK_MODEL: string = 'deepseek-v4-pro' // Chat Completions API: deepseek-v4-pro / deepseek-v4-flash / deepseek-reasoner
 
   // 后端代理模式（保留接口，暂不使用）
   static readonly AI_BASE_URL: string = 'http://127.0.0.1:3003'
 
   // 超时配置（毫秒）
   static readonly REQUEST_TIMEOUT: number = 15000
-  static readonly SSE_TIMEOUT: number = 120000
+  static readonly SSE_TIMEOUT: number = 300000  // 5 分钟：DeepSeek 深度思考模型可能需要 10~60s 才开始输出
 
   static get isDeepSeekDirect(): boolean {
     return CURRENT_AI_MODE === AiEndpointMode.DEEPSEEK_DIRECT

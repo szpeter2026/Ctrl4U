@@ -94,8 +94,25 @@ export class SseClient {
     const decoder: util.TextDecoder = util.TextDecoder.create('utf-8', textDecoderOptions)
 
     callbacks.onStateChange?.(SseState.CONNECTING)
+    console.info('[SseClient] → POST', Config.DEEPSEEK_BASE_URL + '/v1/chat/completions')
+    console.info('[SSE-DEBUG] 1️⃣ 请求已发出, readTimeout=' + Config.SSE_TIMEOUT + 'ms')
 
-    req.on('headersReceive', (_header: Object) => {
+    let httpStatus = 0
+
+    req.on('headersReceive', (header: Object) => {
+      try {
+        httpStatus = (header as Record<string, Object>)['responseCode'] as number || 0
+        const contentType = (header as Record<string, Object>)['Content-Type'] as string || ''
+        console.info('[SseClient] ← HTTP', httpStatus)
+        console.info('[SSE-DEBUG] 2️⃣ 响应头已收到, Content-Type:', contentType)
+      } catch (_e) { /* ignore */ }
+      if (httpStatus >= 400) {
+        hasError = true
+        callbacks.onError(new Error(`HTTP ${httpStatus}: DeepSeek 服务拒绝请求`))
+        callbacks.onStateChange?.(SseState.ERROR)
+        req.destroy()
+        return
+      }
       callbacks.onStateChange?.(SseState.STREAMING)
     })
 
@@ -103,6 +120,8 @@ export class SseClient {
       if (hasError) return
       try {
         const chunk: string = decoder.decodeToString(new Uint8Array(data), { stream: true })
+        console.info('[SseClient] ← data chunk:', chunk.substring(0, 120))
+        console.info('[SSE-DEBUG] 3️⃣ 收到数据块: ' + data.byteLength + ' bytes, 已累计 ' + fullText.length + ' 字')
         buffer += chunk
 
         const events: string[] = buffer.split('\n\n')
@@ -114,9 +133,9 @@ export class SseClient {
 
           const lines: string[] = trimmed.split('\n')
           for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
+            if (!line.startsWith('data:')) continue
 
-            const jsonStr: string = line.substring(6).trim()
+            const jsonStr: string = line.substring(5).trim()  // 兼容 data: 和 data: 
 
             if (jsonStr === '[DONE]') {
               callbacks.onDone(fullText, '')
@@ -155,11 +174,12 @@ export class SseClient {
     })
 
     req.on('dataEnd', () => {
+      console.info('[SSE-DEBUG] 4️⃣ 流已结束, fullText=' + fullText.length + '字, buffer剩余=' + buffer.length + '字节')
       if (hasError) return
       if (buffer.trim()) {
         const lastLine: string = buffer.trim()
-        if (lastLine.startsWith('data: ') && lastLine !== 'data: [DONE]') {
-          const jsonStr: string = lastLine.substring(6)
+        if (lastLine.startsWith('data:') && lastLine !== 'data: [DONE]') {
+          const jsonStr: string = lastLine.substring(5).trim()  // 兼容 data: 和 data: 
           try {
             const parsed: Record<string, Object> = JSON.parse(jsonStr)
             const choices: Object | undefined = parsed['choices']
@@ -178,6 +198,19 @@ export class SseClient {
         }
       }
       if (!hasError) {
+        if (!fullText && buffer) {
+          // 收到非 SSE 格式响应，可能是错误 JSON
+          console.warn('[SseClient] non-SSE response:', buffer.substring(0, 200))
+          try {
+            const errParsed: Record<string, Object> = JSON.parse(buffer.trim())
+            const errObj = errParsed['error']
+            if (errObj) {
+              callbacks.onError(new Error((errObj as Record<string, Object>)['message'] as string || 'DeepSeek API 错误'))
+              callbacks.onStateChange?.(SseState.ERROR)
+              return
+            }
+          } catch (_e2) { /* ignore */ }
+        }
         callbacks.onDone(fullText, '')
         callbacks.onStateChange?.(SseState.DONE)
       }
@@ -211,11 +244,14 @@ export class SseClient {
         },
         extraData: body,
         expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 10000,
+        connectTimeout: 30000,
         readTimeout: Config.SSE_TIMEOUT,
         usingProtocol: http.HttpProtocol.HTTP1_1
+      }).then(() => {
+        // 检查点1：请求已发出，等待 headers
       }).catch((err: BusinessError) => {
         hasError = true
+        console.error('[SseClient] requestInStream failed:', err.code, err.message)
         callbacks.onError(new Error(`DeepSeek 请求失败: ${err.message}`))
         callbacks.onStateChange?.(SseState.ERROR)
         SseClient.activeRequest = null
@@ -223,6 +259,7 @@ export class SseClient {
     } catch (err) {
       hasError = true
       const errorMsg: string = err instanceof Error ? err.message : JSON.stringify(err)
+      console.error('[SseClient] exception:', errorMsg)
       callbacks.onError(new Error(errorMsg))
       callbacks.onStateChange?.(SseState.ERROR)
       SseClient.activeRequest = null
@@ -275,9 +312,9 @@ export class SseClient {
 
           const lines: string[] = trimmed.split('\n')
           for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
+            if (!line.startsWith('data:')) continue
 
-            const jsonStr: string = line.substring(6).trim()
+            const jsonStr: string = line.substring(5).trim()  // 兼容 data: 和 data: 
             if (jsonStr === '[DONE]') {
               callbacks.onDone(fullText, conversationId || '')
               callbacks.onStateChange?.(SseState.DONE)
@@ -327,7 +364,7 @@ export class SseClient {
         },
         extraData: body,
         expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 10000,
+        connectTimeout: 30000,
         readTimeout: Config.SSE_TIMEOUT,
         usingProtocol: http.HttpProtocol.HTTP1_1
       }).catch((err: BusinessError) => {
