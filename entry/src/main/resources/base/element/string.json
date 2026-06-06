@@ -1,0 +1,56 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Ctrl4U"
+    },
+    {
+      "name": "reason_bluetooth_access",
+      "value": "需要蓝牙权限以连接蓝牙设备"
+    },
+    {
+      "name": "reason_bluetooth_discover",
+      "value": "需要蓝牙权限以发现蓝牙设备"
+    },
+    {
+      "name": "reason_location_access",
+      "value": "需要定位权限以获取GPS定位信息"
+    },
+    {
+      "name": "reason_location_approximate",
+      "value": "需要大致定位权限以辅助位置获取"
+    },
+    {
+      "name": "reason_nearlink_access",
+      "value": "需要使用星闪（NearLink）以扫描并连接星闪设备"
+    },
+    {
+      "name": "reason_internet",
+      "value": "需要访问网络以在用户手册中打开官网链接"
+    },
+    {
+      "name": "permission_hide",
+      "value": "Enable the system's anti-peep feature to protect the app's privacy."
+    },
+    {
+      "name": "reason",
+      "value": "Apply for necessary permissions"
+    },
+    {
+      "name": "anti_peep_not_enable",
+      "value": "Privacy protection capability not activated"
+    },
+    {
+      "name": "reason_microphone",
+      "value": "需要使用麦克风以进行语音输入"
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "wearable",
+      "tv",
+      "car"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "requestPermissions": [
+    	{
+        "name": "ohos.permission.DLP_GET_HIDE_STATUS",
+        "reason": "$string:permission_hide",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
+        "reason": "$string:reason_bluetooth_access",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.DISCOVER_BLUETOOTH",
+        "reason": "$string:reason_bluetooth_discover",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.LOCATION",
+        "reason": "$string:reason_location_access",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.APPROXIMATELY_LOCATION",
+        "reason": "$string:reason_location_approximate",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCESS_NEARLINK",
+        "reason": "$string:reason_nearlink_access",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.INTERNET",
+        "reason": "$string:reason_internet",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.MICROPHONE",
+        "reason": "$string:reason_microphone",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      }
+    ],
+    "pages": "$profile:main_pages",
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:144x144",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:144x144",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "ohos.want.action.home"
+            ]
+          }
+        ]
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "EntryBackupAbility",
+        "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
+        "type": "backup",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.backup",
+            "resource": "$profile:backup_config"
+          }
+        ],
+      }
+    ]
+  }
+}

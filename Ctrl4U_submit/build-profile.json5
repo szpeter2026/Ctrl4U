@@ -1,0 +1,67 @@
+{
+  "app": {
+    "products": [
+      {
+        "name": "default",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ],
+    "capabilities": [
+      {
+        "bundleName": "com.yedall.ctrl4u",
+        "config": [
+          {
+            "name": "webAccessServiceForAIQA",
+            "capability": "webAccessServiceForAIQA"
+          },
+          {
+            "name": "Push Kit",
+            "capability": "com.huawei.service.push.base_service"
+          },
+          {
+            "name": "Device status detection",
+            "capability": "com.huawei.service.device_security.device_verify"
+          },
+          {
+            "name": "Map Kit",
+            "capability": "com.huawei.service.mapkit"
+          },
+          {
+            "name": "Safety Detect",
+            "capability": "com.huawei.service.device_security.safety_detect"
+          }
+        ]
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
