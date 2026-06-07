@@ -97,9 +97,11 @@ struct Index {
   @State mouseModeOn: boolean = true;
   @State legacyDevices: DeviceItem[] = [];
   @State appVersionName: string = '';
-  private standVideoController: VideoController = new VideoController();
-  @State mainVideoSrc: Resource = $rawfile('stand.mp4');
+  // 性能优化：延迟初始化视频控制器，减少启动时间
+  private standVideoController: VideoController | null = null;
+  @State mainVideoSrc: Resource | null = null;
   @State mainVideoLoop: boolean = true;
+  @State isVideoInitialized: boolean = false;
   @State runClipPlaybackActive: boolean = false;
   /** +按钮忙碌动画状态：点击后显示LoadingProgress，3秒后弹出消息并恢复 */
   @State plusButtonBusy: boolean = false;
@@ -131,16 +133,31 @@ struct Index {
 
   }
 
-  /** DeviceSecurityKit.checkSysIntegrity — 启动时跑一次，结果写入日志面板 */
+  /** 延迟初始化视频资源 - 性能优化 */
+  private initVideoResources(): void {
+    if (this.isVideoInitialized) return;
+    
+    this.standVideoController = new VideoController();
+    this.mainVideoSrc = $rawfile('stand.mp4');
+    this.isVideoInitialized = true;
+  }
+
+  /** DeviceSecurityKit.checkSysIntegrity — 延迟到后台执行，避免阻塞启动 */
   private runStartupSysIntegrityProbe(): void {
-    safetyDetectModel.checkSysIntegrity((result: String) => {
-      const text = `${result}`;
-      if (text.indexOf('failed') >= 0 || text.indexOf('errCode') >= 0) {
-        this.appendLog('WARN', `系统完整性: ${text}`);
-      } else {
-        this.appendLog('INFO', `系统完整性检测已完成（应答长度 ${text.length}）`);
-      }
-    });
+    // 性能优化：延迟3秒执行，不阻塞UI渲染
+    setTimeout(() => {
+      if (this.hasRunSysIntegrityProbe) return;
+      this.hasRunSysIntegrityProbe = true;
+      
+      safetyDetectModel.checkSysIntegrity((result: String) => {
+        const text = `${result}`;
+        if (text.indexOf('failed') >= 0 || text.indexOf('errCode') >= 0) {
+          this.appendLog('WARN', `系统完整性: ${text}`);
+        } else {
+          this.appendLog('INFO', `系统完整性检测已完成（应答长度 ${text.length}）`);
+        }
+      });
+    }, 3000);
   }
 
   // ── AI 助手方法 ──
@@ -1573,7 +1590,13 @@ struct Index {
 
     if (!this.hasRunSysIntegrityProbe) {
       this.hasRunSysIntegrityProbe = true;
-      this.runStartupSysIntegrityProbe();
+      // 性能优化：系统完整性检测已延迟到后台执行
+    this.runStartupSysIntegrityProbe();
+    
+    // 性能优化：延迟初始化视频资源
+    setTimeout(() => {
+      this.initVideoResources();
+    }, 1000);
     }
 
     if (this.hasRequestedStartupLocation) {
